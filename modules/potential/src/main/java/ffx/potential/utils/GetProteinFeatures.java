@@ -396,8 +396,8 @@ public class GetProteinFeatures {
       String pos = currentNP.substring(1, currentNP.length() - 1);
       String wt3Letter = aminoAcidCodes.get(wt).toString();
       String mut3Letter = aminoAcidCodes.get(mut).toString();
-      String wildType = wt3Letter.charAt(0) + wt3Letter.substring(1, 3);//.toLowerCase();
-      String mutant = mut3Letter.charAt(0) + mut3Letter.substring(1, 3);//.toLowerCase();
+      String wildType = wt3Letter.charAt(0) + wt3Letter.substring(1, 3).toLowerCase();
+      String mutant = mut3Letter.charAt(0) + mut3Letter.substring(1, 3).toLowerCase();
       String npChange = "p." + wildType + pos + mutant;
       npChanges.add(npChange);
     }

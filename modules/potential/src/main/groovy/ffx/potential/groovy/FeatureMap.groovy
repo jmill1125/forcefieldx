@@ -268,7 +268,11 @@ class FeatureMap extends PotentialScript {
                                 pA = ["null", "null"]
                             }
                             feat = featureList.get(position - 1)
-                        }
+                        } else {
+			    ddG = ["null", "null"]
+			    pA = ["null", "null"]
+			    Arrays.fill(feat,null)
+			}
                     }
                     String isomer
                     if(multipleIsomers){
@@ -309,7 +313,9 @@ class FeatureMap extends PotentialScript {
 
             }
         } catch (Exception e) {
-            System.out.println(e);
+            logger.info("IN CATCH BLOCKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKk")	
+            System.out.println(e)
+	    e.printStackTrace()
         } finally {
             if (br != null)
                 br.close();
