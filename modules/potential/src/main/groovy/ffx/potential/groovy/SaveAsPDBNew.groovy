@@ -37,18 +37,18 @@
 //******************************************************************************
 package ffx.potential.groovy
 
+import ffx.crystal.Crystal
 import ffx.potential.MolecularAssembly
 import ffx.potential.bonded.Atom
+import ffx.potential.bonded.Bond
 import ffx.potential.bonded.MSNode
 import ffx.potential.bonded.Polymer
 import ffx.potential.bonded.Residue
 import ffx.potential.cli.PotentialScript
 import ffx.potential.cli.SaveOptions
-import ffx.potential.extended.ExtendedSystem
 import ffx.potential.parameters.BioType
 import ffx.potential.parsers.PDBFilter
 import ffx.potential.parsers.SystemFilter
-import ffx.potential.parsers.XPHFilter
 import ffx.potential.parsers.XYZFilter
 import picocli.CommandLine.Command
 import picocli.CommandLine.Mixin
@@ -123,6 +123,8 @@ class SaveAsPDBNew extends PotentialScript {
 
   private Map<String, List<Integer>> moleculeAtomTypeDict = new HashMap<>()
 
+  private Map<Integer, Atom> copiedAtomMap = new HashMap<>()
+
   /**
    * SaveAsPDBNew Constructor.
    */
@@ -159,9 +161,120 @@ class SaveAsPDBNew extends PotentialScript {
     // Set the filename.
     filename = activeAssembly.getFile().getAbsolutePath()
 
-    // CREATE BIOTYPE MOLECULE MAP - { (MOL1, AtomType[]), (MOL2, AtomType[]), ... }
+    logger.info("\n Saving PDB for " + filename)
+
+    // Use the current base directory, or update if necessary based on the given filename.
+    String dirString = getBaseDirString(filename)
+
+    String name = removeExtension(getName(filename)) + ".pdb"
+    File saveFile = new File(dirString + name)
+
+    SystemFilter openFilter = potentialFunctions.getFilter()
+
+    // Handle snapshot writing to separate files.
+    if (firstSnapshot >= 0) {
+      openFilter.readNext(true)
+      boolean resetPosition = true
+      int counter = 0
+      int snapshotCounter = 0
+      logger.info(" Writing snapshots from " + firstSnapshot + " to " + lastSnapshot + " with increment " + snapshotIncrement)
+
+      while (openFilter.readNext(resetPosition)) {
+        resetPosition = false
+        int offset = counter - firstSnapshot
+        if (counter >= firstSnapshot && counter <= lastSnapshot && offset % snapshotIncrement == 0) {
+          File snapshotFile
+          if (writeToDirectories) {
+            String subdirectory = concat(dirString, snapshotCounter.toString())
+            snapshotFile = new File(concat(subdirectory, name))
+            createParentDirectories(snapshotFile)
+            if (copyProperties) {
+              String propertyFile = activeAssembly.getProperties().getString("propertyFile")
+              if (propertyFile != null) {
+                String propertyFilename = getName(propertyFile)
+                File copyOfPropFile = new File(concat(subdirectory, propertyFilename))
+                logger.info("\n Copying properties to " + copyOfPropFile.toString())
+                copyFile(new File(propertyFile), copyOfPropFile)
+              }
+            }
+          } else {
+            snapshotFile = new File(concat(dirString, removeExtension(name) + "." + counter.toString() + ".pdb"))
+          }
+          potentialFunctions.versionFile(snapshotFile)
+          saveOptions.preSaveOperations(activeAssembly)
+          MolecularAssembly newAssembly = buildNewAssembly()
+          PDBFilter snapshotFilter = new PDBFilter(snapshotFile, newAssembly, newAssembly.getForceField(), newAssembly.getProperties())
+          snapshotFile.append(activeAssembly.getCrystal().toCRYST1())
+          snapshotFilter.writeFile(snapshotFile, true)
+          snapshotCounter++
+        }
+        counter++
+      }
+      return this
+    }
+
+    saveFile = potentialFunctions.versionFile(saveFile)
+
+    int numModels = openFilter.countNumModels()
+
+    if (numModels == 1) {
+      // Write one model and return.
+      saveOptions.preSaveOperations(activeAssembly)
+      MolecularAssembly newAssembly = buildNewAssembly()
+      PDBFilter pdbFilter = new PDBFilter(saveFile, newAssembly, newAssembly.getForceField(), newAssembly.getProperties())
+      saveFile.append(activeAssembly.getCrystal().toCRYST1())
+      pdbFilter.writeFile(saveFile, true)
+      return this
+    }
+
+//    String cryst = activeAssembly.getCrystal().toCRYST1()
+//    Crystal crystal = activeAssembly.getCrystal()
+
+    // Write out multiple models into a single PDB file.
+    saveFile.write("MODEL        1\n")
+//    saveFile.append(cryst)
+//    saveOptions.preSaveOperations(activeAssembly)
+    MolecularAssembly firstAssembly = buildNewAssembly()
+    saveOptions.preSaveOperations(activeAssembly)
+//    PDBFilter saveFilter = new PDBFilter(saveFile, firstAssembly, firstAssembly.getForceField(), firstAssembly.getProperties())
+    // TODO - working without cryst line
+    PDBFilter saveFilter = new PDBFilter(saveFile, firstAssembly, null, null)
+    saveFilter.writeFile(saveFile, true, false, false)
+    saveFile.append("ENDMDL\n")
+    int modelNum = 1
+    saveFilter.setModelNumbering(modelNum)
+
+
+    // Iterate through the rest of the models in an arc or pdb.
+    if (openFilter != null && (openFilter instanceof XYZFilter || openFilter instanceof PDBFilter)) {
+      try {
+        while (openFilter.readNext(false)) {
+          saveOptions.preSaveOperations(activeAssembly)
+          MolecularAssembly nextAssembly = buildNewAssembly()
+//          PDBFilter modelFilter = new PDBFilter(saveFile, nextAssembly, nextAssembly.getForceField(), nextAssembly.getProperties())
+          PDBFilter modelFilter = new PDBFilter(saveFile, nextAssembly, null, null)
+          modelFilter.setModelNumbering(modelNum)
+          modelFilter.writeFile(saveFile, true, true, false)
+          modelNum++
+        }
+      } catch (Exception e) {
+        // Do nothing.
+      }
+      // Add a final "END" record.
+      saveFile.append("END\n")
+    }
+    return this
+  }
+
+  /**
+   * Build a new MolecularAssembly from the current activeAssembly by identifying DNA chains,
+   * waters, and ions, and constructing appropriate PDB-ready hierarchy.
+   */
+  private MolecularAssembly buildNewAssembly() {
+    // Refresh the molecule atom type dictionary from the current force field.
+    moleculeAtomTypeDict.clear()
     Map<String, BioType> bioTypes = activeAssembly.getForceField().getBioTypeMap()
-    Map<String, ArrayList<BioType>> moleculeDict = new HashMap<>() // todo can delete but careful with logic
+    Map<String, ArrayList<BioType>> moleculeDict = new HashMap<>()
     if (!bioTypes.values().isEmpty()) {
       for (BioType bioType : bioTypes.values()) {
         if (!moleculeDict.containsKey(bioType.moleculeName)) {
@@ -176,6 +289,31 @@ class SaveAsPDBNew extends PotentialScript {
     }
 
     List<Atom> atoms = new ArrayList<>(activeAssembly.getAtomList()) // make a copy
+
+    // create a copied atom map
+    copiedAtomMap.clear()
+    for (Atom a : atoms) {
+//      Atom aCopy = new Atom(a.xyzIndex, a, a.getXYZ(new double[3]), resNum, chain, Character.toString(chain))
+      Atom aCopy = new Atom(a.xyzIndex, a, a.getXYZ(new double[3]), -1, 'A' as char, "A")
+
+      copiedAtomMap.put(a.xyzIndex as Integer, aCopy)
+    }
+
+    // adding bonds for the copied atoms
+    for (Atom a : atoms) {
+      int i = a.xyzIndex
+      List<Atom> bondedAtoms = new ArrayList<>(a.get12List())
+      Atom copy = copiedAtomMap.get(i as Integer)
+      List<Atom> alreadyAddedAtoms = new ArrayList<>(copy.get12List())
+      for (Atom ba : bondedAtoms) {
+        int bi = ba.xyzIndex
+        Atom bondedCopy = copiedAtomMap.get(bi as Integer)
+        if (!alreadyAddedAtoms.contains(bondedCopy)) {
+          Bond b = new Bond(copy, bondedCopy)
+        }
+      }
+    }
+
     int fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1) // 0 = O5* ; 1 = H5T
     int waterType = moleculeAtomTypeDict.get("Water").get(0) // 0 = O ; 1 = H
     int naType = moleculeAtomTypeDict.get("Sodium Ion").get(0)
@@ -197,7 +335,6 @@ class SaveAsPDBNew extends PotentialScript {
     }
 
     // Make all DNA chains
-    // todo - assuming all DNA strands start with HO5' and end with HO3'
     int num = 0
     MSNode polymers = new MSNode()
     for (Atom atom : fivePrimeOs) {
@@ -207,9 +344,9 @@ class SaveAsPDBNew extends PotentialScript {
       } else if (num == 1) {
         chain = 'B'
       } else {
-        logger.severe("MORE THAN 2 CHAINS. CAN'T HANDLE YET.") // todo
+        logger.severe("MORE THAN 2 CHAINS. CAN'T HANDLE YET.")
       }
-      Polymer polymer = addDNAChain(atom, chain) // todo - could also do for protein (and RNA)
+      Polymer polymer = addDNAChain(atom, chain)
       polymers.add(polymer)
       num++
     }
@@ -236,7 +373,9 @@ class SaveAsPDBNew extends PotentialScript {
         a.setResName("HOH")
         a.setResidueNumber(resNum)
         a.setChainID(chain)
-        newAssembly.addMSNode(a)
+        // make a copy of the atom to not re-parent the atom in the original assembly
+        Atom aCopy = new Atom(a.xyzIndex, a, a.getXYZ(new double[3]), resNum, chain, Character.toString(chain))
+        newAssembly.addMSNode(aCopy)
       }
       resNum++
     }
@@ -251,20 +390,13 @@ class SaveAsPDBNew extends PotentialScript {
       }
       atom.setResidueNumber(resNum)
       atom.setChainID(chain)
-      newAssembly.addMSNode(atom)
+      // make a copy of the atom to not re-parent the atom in the original assembly
+      Atom aCopy = new Atom(atom.xyzIndex, atom, atom.getXYZ(new double[3]), resNum, chain, Character.toString(chain))
+      newAssembly.addMSNode(aCopy)
       resNum++
     }
 
-    String name = removeExtension(getName(filename)) + ".pdb"
-    File saveFile = new File(name)
-
-    saveFile = potentialFunctions.versionFile(saveFile)
-    PDBFilter pdbFilter = new PDBFilter(saveFile, newAssembly, newAssembly.getForceField(), newAssembly.getProperties())
-
-    saveFile.append(activeAssembly.getCrystal().toCRYST1()) // append header CRYST1 line
-    pdbFilter.writeFile(saveFile, true)
-
-    return this
+    return newAssembly
   }
 
   private Polymer addDNAChain(Atom startAtom, Character chain) {
@@ -288,10 +420,20 @@ class SaveAsPDBNew extends PotentialScript {
       Residue residue = new Residue(resNum, Residue.ResidueType.NA)
       residue.setChainID(chain)
 
-      // add atoms to residue
+      // add copied atoms to residue
       for (Atom a : currResidue) {
-        residue.addMSNode(a)
+        int i = a.xyzIndex
+        Atom aCopy = copiedAtomMap.get(i as Integer)
+        aCopy.setResidueNumber(resNum)
+        aCopy.setChainID(chain)
+        aCopy.setSegID(chain as String)
+        residue.addMSNode(aCopy)
       }
+
+//      // TODO - original implementation
+//      for (Atom a : currResidue) {
+//        residue.addMSNode(a)
+//      }
 
       String code = getResidueCode(residue)
       residue.setName(code)
