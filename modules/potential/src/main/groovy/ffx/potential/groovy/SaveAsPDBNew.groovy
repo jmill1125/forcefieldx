@@ -37,7 +37,6 @@
 //******************************************************************************
 package ffx.potential.groovy
 
-import ffx.crystal.Crystal
 import ffx.potential.MolecularAssembly
 import ffx.potential.bonded.Atom
 import ffx.potential.bonded.Bond
@@ -106,13 +105,6 @@ class SaveAsPDBNew extends PotentialScript {
   @Option(names = ['--cp', '--copyProperties'], paramLabel = "true", defaultValue = "true",
       description = 'Copy the property file to numbered subdirectories (ignored if not writing to subdirectories).')
   private boolean copyProperties = true
-
-  /**
-   * --esv Handle an extended system at the bottom of XYZ files using XPHFilter.
-   */
-  @Option(names = ['--esv'], paramLabel = "file", defaultValue = "",
-      description = 'PDB file to build extended system from.')
-  private String extended = ""
 
   /**
    * The final argument is an XYZ or ARC coordinate file.
@@ -227,17 +219,11 @@ class SaveAsPDBNew extends PotentialScript {
       return this
     }
 
-//    String cryst = activeAssembly.getCrystal().toCRYST1()
-//    Crystal crystal = activeAssembly.getCrystal()
-
     // Write out multiple models into a single PDB file.
     saveFile.write("MODEL        1\n")
-//    saveFile.append(cryst)
-//    saveOptions.preSaveOperations(activeAssembly)
+    saveFile.append(activeAssembly.getCrystal().toCRYST1())
     MolecularAssembly firstAssembly = buildNewAssembly()
     saveOptions.preSaveOperations(activeAssembly)
-//    PDBFilter saveFilter = new PDBFilter(saveFile, firstAssembly, firstAssembly.getForceField(), firstAssembly.getProperties())
-    // TODO - working without cryst line
     PDBFilter saveFilter = new PDBFilter(saveFile, firstAssembly, null, null)
     saveFilter.writeFile(saveFile, true, false, false)
     saveFile.append("ENDMDL\n")
@@ -293,9 +279,7 @@ class SaveAsPDBNew extends PotentialScript {
     // create a copied atom map
     copiedAtomMap.clear()
     for (Atom a : atoms) {
-//      Atom aCopy = new Atom(a.xyzIndex, a, a.getXYZ(new double[3]), resNum, chain, Character.toString(chain))
       Atom aCopy = new Atom(a.xyzIndex, a, a.getXYZ(new double[3]), -1, 'A' as char, "A")
-
       copiedAtomMap.put(a.xyzIndex as Integer, aCopy)
     }
 
@@ -317,7 +301,7 @@ class SaveAsPDBNew extends PotentialScript {
     int fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1) // 0 = O5* ; 1 = H5T
     int waterType = moleculeAtomTypeDict.get("Water").get(0) // 0 = O ; 1 = H
     int naType = moleculeAtomTypeDict.get("Sodium Ion").get(0)
-    int clType = moleculeAtomTypeDict.get("Chloride Ion").get(0)
+    int clType = moleculeAtomTypeDict.get("Chloride Ion").get(0) // todo - could make list of all ion types
     List<Atom> fivePrimeOs = new ArrayList<>()
     List<Atom> waterOs = new ArrayList<>()
     List<Atom> ions = new ArrayList<>()
@@ -334,29 +318,26 @@ class SaveAsPDBNew extends PotentialScript {
       }
     }
 
+    String chainCharOptions = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" // maximum of 26 chains
+
     // Make all DNA chains
-    int num = 0
+    int c = 0
     MSNode polymers = new MSNode()
     for (Atom atom : fivePrimeOs) {
-      Character chain = 'X'
-      if (num == 0) {
-        chain = 'A'
-      } else if (num == 1) {
-        chain = 'B'
-      } else {
-        logger.severe("MORE THAN 2 CHAINS. CAN'T HANDLE YET.")
-      }
+      Character chain = chainCharOptions.charAt(c)
       Polymer polymer = addDNAChain(atom, chain)
       polymers.add(polymer)
-      num++
+      c++
     }
+
+    // Make all protein chains - TODO
 
     // create new molecular assembly with polymers created above
     MolecularAssembly newAssembly = new MolecularAssembly("NewAssembly", polymers, activeAssembly.getForceField().getProperties())
     newAssembly.setForceField(activeAssembly.getForceField())
 
     // add the water molecules created above
-    Character chain = 'C'
+    Character chain = 'A'
     int resNum = 1
     for (Atom atom : waterOs) {
       List<Atom> hAtoms = atom.get12List()
@@ -383,7 +364,7 @@ class SaveAsPDBNew extends PotentialScript {
     // add the ions
     for (Atom atom : ions) {
       atom.setHetero(true)
-      if (atom.getType() == naType) {
+      if (atom.getType() == naType) { // todo - could make list of all ion types (see above)
         atom.setResName("NA")
       } else if (atom.getType() == clType) {
         atom.setResName("CL")
@@ -429,11 +410,6 @@ class SaveAsPDBNew extends PotentialScript {
         aCopy.setSegID(chain as String)
         residue.addMSNode(aCopy)
       }
-
-//      // TODO - original implementation
-//      for (Atom a : currResidue) {
-//        residue.addMSNode(a)
-//      }
 
       String code = getResidueCode(residue)
       residue.setName(code)
@@ -495,19 +471,20 @@ class SaveAsPDBNew extends PotentialScript {
       List<Integer> bioTypes = new ArrayList<>(moleculeAtomTypeDict.get(name))
       bioTypes.sort()
 
+      // check if atom types match biotypes off the bat
       if (atomTypes == bioTypes) {
         return nameToCode(name)
       } else if (atomTypes.contains((Object) 342 as Integer)) {
-        bioTypes.remove((Object) 341) // remove regular O5' // todo - would it work for all four bases ??
+        // if residue is a 5' end.. remove regular O5' and need to add H5T and O5' (terminal)
+        bioTypes.remove((Object) 341) // remove regular O5'
         bioTypes.add((Object) 342 as Integer) // H5T - 5-Hydroxyl DNA
         bioTypes.add((Object) 348 as Integer) // O5' - 5-Hydroxyl DNA
         if (atomTypes == bioTypes) {
           return nameToCode(name)
         }
       } else if (atomTypes.contains((Object) 339 as Integer)) {
-        // todo - no support for a single nucleotide.. won't handle both 5'-OH and  3'-OH
-
-        bioTypes.remove((Object) 338) // remove regular O3' // todo - would it work for all four bases ??
+        // if residue is a 3' end.. remove regular O3' and need to add H3T and O3' (terminal) along with phosphate
+        bioTypes.remove((Object) 338) // remove regular O3'
         bioTypes.add((Object) 343 as Integer) // P - Phosphodiester DNA
         bioTypes.add((Object) 344 as Integer) // OP - Phosphodiester DNA
         bioTypes.add((Object) 344 as Integer) // OP - Phosphodiester DNA
@@ -518,21 +495,27 @@ class SaveAsPDBNew extends PotentialScript {
           return nameToCode(name)
         }
       } else {
+        // not 5' or 3' terminal residue, so just add phosphate group
         bioTypes.add((Object) 343 as Integer) // P - Phosphodiester DNA
         bioTypes.add((Object) 344 as Integer) // OP - Phosphodiester DNA
         bioTypes.add((Object) 344 as Integer) // OP - Phosphodiester DNA
         if (atomTypes == bioTypes) {
           return nameToCode(name)
-        } else if (name == "Deoxythymidine" && atomTypes.contains((Object) 295 as Integer)) {
-          bioTypes.add((Object) 295 as Integer) // H7 - Deoxythymidine
-          bioTypes.add((Object) 295 as Integer) // H7 - Deoxythymidine
-          bioTypes.sort()
-          if (atomTypes == bioTypes) {
-            return nameToCode(name)
-          }
+        }
+      }
+
+      // final check - need to add the other 2 H7s if the residue is deoxythymidine (bioTypes contains 1 H7, need 3)
+      if (name == "Deoxythymidine" && atomTypes.contains((Object) 295 as Integer)) {
+        bioTypes.add((Object) 295 as Integer) // H7 - Deoxythymidine
+        bioTypes.add((Object) 295 as Integer) // H7 - Deoxythymidine
+        bioTypes.sort()
+        if (atomTypes == bioTypes) {
+          return nameToCode(name)
         }
       }
     }
+
+    // todo - no support for a single nucleotide.. won't handle both 5'-OH and  3'-OH
 
     logger.info("UNMATCHED RESIDUE: " + residue.toFormattedString(true, true))
     return ""
