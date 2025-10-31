@@ -38,6 +38,7 @@
 package ffx.potential.groovy
 
 import ffx.potential.MolecularAssembly
+import ffx.potential.bonded.AminoAcidUtils
 import ffx.potential.bonded.Atom
 import ffx.potential.bonded.Bond
 import ffx.potential.bonded.MSNode
@@ -149,6 +150,12 @@ class SaveAsPDBNew extends PotentialScript {
       logger.info(helpString())
       return this
     }
+    // todo testing
+    List<Atom> testAtoms = activeAssembly.getAtomList(true)
+    for (Atom a : testAtoms) {
+      logger.info(a.toString())
+    }
+    return this
 
     // Set the filename.
     filename = activeAssembly.getFile().getAbsolutePath()
@@ -298,11 +305,19 @@ class SaveAsPDBNew extends PotentialScript {
       }
     }
 
+    // todo - delete
+//    atom    231     41  N     "N-Terminal NH3+"            7   14.0070  4
+//    atom    232     42  H     "N-Terminal H3N+"            1    1.0080  1
+//    atom    233     30  C     "C-Terminal COO-"            6   12.0110  3
+//    atom    234     31  O     "C-Terminal COO-"            8   15.9990  1
+
     int fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1) // 0 = O5* ; 1 = H5T
+    int nTermNH3Type = moleculeAtomTypeDict.get("N-Terminal GLY").get(0) // 231 - its in all N-terminal amino acids, except proline
     int waterType = moleculeAtomTypeDict.get("Water").get(0) // 0 = O ; 1 = H
     int naType = moleculeAtomTypeDict.get("Sodium Ion").get(0)
     int clType = moleculeAtomTypeDict.get("Chloride Ion").get(0) // todo - could make list of all ion types
-    List<Atom> fivePrimeOs = new ArrayList<>()
+    List<Atom> fivePrimeHs = new ArrayList<>()
+    List<Atom> nTermNH3s = new ArrayList<>()
     List<Atom> waterOs = new ArrayList<>()
     List<Atom> ions = new ArrayList<>()
 
@@ -314,7 +329,9 @@ class SaveAsPDBNew extends PotentialScript {
       } else if (at == naType || at == clType) {
         ions.add(atom)
       } else if (at == fivePrimeHType) { // get HO5' (start of the DNA chain)
-        fivePrimeOs.add(atom)
+        fivePrimeHs.add(atom)
+      } else if (at == nTermNH3Type) { // get N of NH3+ (start of protein chain)
+        nTermNH3s.add(atom)
       }
     }
 
@@ -323,14 +340,20 @@ class SaveAsPDBNew extends PotentialScript {
     // Make all DNA chains
     int c = 0
     MSNode polymers = new MSNode()
-    for (Atom atom : fivePrimeOs) {
+    for (Atom atom : fivePrimeHs) {
       Character chain = chainCharOptions.charAt(c)
       Polymer polymer = addDNAChain(atom, chain)
       polymers.add(polymer)
       c++
     }
 
-    // Make all protein chains - TODO
+    // Make all protein chains
+    for (Atom atom : nTermNH3s) {
+      Character chain = chainCharOptions.charAt(c)
+      Polymer polymer = addProteinChain(atom, chain)
+      polymers.add(polymer)
+      c++
+    }
 
     // create new molecular assembly with polymers created above
     MolecularAssembly newAssembly = new MolecularAssembly("NewAssembly", polymers, activeAssembly.getForceField().getProperties())
@@ -380,6 +403,7 @@ class SaveAsPDBNew extends PotentialScript {
     return newAssembly
   }
 
+  // Creates a Polymer object for a DNA chain given an H5' to grow from
   private Polymer addDNAChain(Atom startAtom, Character chain) {
     // Set up new Polymer (chain) for a DNA strand
     Polymer polymer = new Polymer(chain, chain.toString())
@@ -411,7 +435,7 @@ class SaveAsPDBNew extends PotentialScript {
         residue.addMSNode(aCopy)
       }
 
-      String code = getResidueCode(residue)
+      String code = getDNAResidueCode(residue)
       residue.setName(code)
 
       // add residue to polymer
@@ -429,7 +453,121 @@ class SaveAsPDBNew extends PotentialScript {
     return polymer
   }
 
-  // Attempt at Recursive atom finding
+  // Creates a Polymer object for an amino acid chain given an NH3+ to grow from
+  private Polymer addProteinChain(Atom startAtom, Character chain) {
+    // Set up new Polymer (chain) for a protein strand
+    Polymer polymer = new Polymer(chain, chain.toString())
+
+    // atom to start building residue from
+    Atom atom = startAtom
+
+    int resNum = 1
+    while (atom != null) {
+      // atom list for current residue
+      List<Atom> currResidue = new ArrayList<>()
+      // add starting atom current residue atom list
+      currResidue.add(atom)
+      // atom list for next residue - will contain the next residue's starting atom (nitrogen)
+      List<Atom> nextResidue = new ArrayList<>()
+      // recursively find all atoms in the residue
+      findAAResidueAtoms(atom.index, atom, currResidue, nextResidue)
+      logger.info("NEXTRESSIZE: " + nextResidue.size() + " ; atoms: " + nextResidue)
+      // create a new residue
+      Residue residue = new Residue(resNum, Residue.ResidueType.AA)
+      residue.setChainID(chain)
+
+      // add copied atoms to residue
+      for (Atom a : currResidue) {
+        int i = a.xyzIndex
+        Atom aCopy = copiedAtomMap.get(i as Integer)
+        aCopy.setResidueNumber(resNum)
+        aCopy.setChainID(chain)
+        aCopy.setSegID(chain as String)
+        residue.addMSNode(aCopy)
+      }
+
+      String code = getAAResidueCode(residue) // todo
+      residue.setName(code)
+
+      // add residue to polymer
+      polymer.addMSNode(residue)
+
+      resNum++
+
+      if (nextResidue.size() == 1) {
+        atom = nextResidue.get(0) // start next residue at peptide bond nitrogen
+      } else {
+        atom = null // end loop
+      }
+    }
+
+    return polymer
+  }
+
+  // Recursive atom finding for an amino acid residue
+  private void findAAResidueAtoms(int startingIndex, Atom atom, List<Atom> currResidue, List<Atom> nextResidue) {
+    List<Atom> bondedAtoms = new ArrayList<>(atom.get12List())
+    // If start atom (nitrogen that is part of the peptide bond
+    if (atom.atomicNumber == 7 && isPeptideBond(atom)) {
+      Atom cpep = null
+      for (Atom a : bondedAtoms) {
+        // look for the C atom in the peptide bond to remove it (part of the previous residue)
+        if (a.atomicNumber == 6 && isPeptideBond(a)) {
+          cpep = a
+        }
+      }
+      if (cpep != null) {
+        bondedAtoms.remove(cpep)
+      } else {
+        logger.severe("Missing C from the peptide bond.")
+      }
+    }
+    for (Atom ba : bondedAtoms) {
+      // Do not add the next amino acid's N of peptide bond to this residue. Add it to the next and stop recursion.
+      if (!currResidue.contains(ba) && !(ba.atomicNumber == 7 && isPeptideBond(ba))) {
+        currResidue.add(ba)
+        findAAResidueAtoms(startingIndex, ba, currResidue, nextResidue)
+      } else if ((ba.atomicNumber == 7 && isPeptideBond(ba))  && !nextResidue.contains(ba) && ba.index != startingIndex) {
+        nextResidue.add(ba)
+      }
+    }
+  }
+
+  // Check to see if the atom is part of a peptide bond
+  private static boolean isPeptideBond(Atom atom) {
+    List<Atom> bondedAtoms = new ArrayList<>(atom.get12List())
+    if (atom.atomicNumber == 7) {
+      // The N atom of the bond should be bound to c-alpha (CA), hydrogen (HN), and peptide carbon (C)
+      for (Atom a : bondedAtoms) {
+        String atomName = a.atomType.name
+//        String atomName = a.name
+        if (atomName != "CA" && atomName != "HN" && atomName != "C") {
+          return false
+        }
+      }
+    } else if (atom.atomicNumber == 6) {
+      // The C atom of the bond should be bound to c-alpha (CA), oxygen (O), and peptide nitrogen (N)
+      for (Atom a : bondedAtoms) {
+        String atomName = a.atomType.name
+//        String atomName = a.name
+        if (atomName != "CA" && atomName != "O" && atomName != "N") {
+          return false
+        }
+      }
+    } else {
+      // A peptide bond only consists of nitrogen or carbon
+      return false
+    }
+
+    // make sure there is only 3 bonds
+    if (bondedAtoms.size() != 3) {
+      return false
+    }
+
+    return true
+  }
+
+  // Recursive atom finding for a DNA residue
   private void findDNAResidueAtoms(int startingIndex, Atom atom, List<Atom> currResidue, List<Atom> nextResidue) {
     List<Atom> bondedAtoms = new ArrayList<>(atom.get12List())
     if (atom.atomicNumber == 15) { // 15 is phosphorus
@@ -455,8 +593,80 @@ class SaveAsPDBNew extends PotentialScript {
     }
   }
 
+  // Get amino acid residue name
+  private String getAAResidueCode(Residue residue) {
+    // Count the number of each element in the side chain and put into string (e.g., MET is "S1C3")
+    List<Atom> atoms = new ArrayList<>(residue.getAtomList(true))
+    logger.info("BEFORESIZE: " + atoms.size())
+    logger.info("INITATOMS: " + atoms)
+    List<String> backboneNames = ["N", "CA", "C", "O", "HN", "HA"] // backbone atom names, todo - ensure correct for proline
+//    for (Atom atom : atoms) {
+//      String atomName = atom.atomType.name
+//      // Remove the atom from atom list if it is a backbone atom, only want sidechain
+//      if (backboneNames.contains(atomName)) {
+//        atoms.remove(atom)
+//      }
+//    }
+//    atoms.removeIf {a -> backboneNames.contains(a.atomType.name)}
+    atoms.removeIf {a -> backboneNames.contains(a.name)}
+    logger.info("AFTERSIZE: " + atoms.size())
+
+    // If removing the backbone atoms removes all atoms, the amino acid was glycine
+    if (atoms.size() == 0) {
+      return "GLY"
+    }
+
+    // Count S, O, N, and C atoms - excluding H from side chain uniqueness
+    int nS = 0
+    int nO = 0
+    int nN = 0
+    int nC = 0
+    for (Atom atom : atoms) {
+      if (atom.atomicNumber == 16) {
+        nS++
+      } else if (atom.atomicNumber == 8) {
+        nO++
+      } else if (atom.atomicNumber == 7) {
+        nN++
+      } else if (atom.atomicNumber == 6) {
+        nC++
+      }
+    }
+
+    StringBuilder sb = new StringBuilder()
+    if (nS > 0) {
+      sb.append("S" + nS)
+    }
+    if (nO > 0) {
+      sb.append("O" + nO)
+    }
+    if (nN > 0) {
+      sb.append("N" + nN)
+    }
+    if (nC > 0) {
+      sb.append("C" + nC)
+    }
+
+    String code = AminoAcidUtils.sidechainStoichiometry.get(sb.toString())
+
+    logger.info("ATOMS: " + atoms + " ; SS: " + sb + " ; CODE: " + code)
+
+    if (code != null && code != "") {
+      return code
+    }
+
+    // TODO:
+    // Can't do Proline/Valine, and Isoleucine/leucine
+    //    sidechainStoichiometry.put("C3", "1"); // Proline / Valine
+    //    sidechainStoichiometry.put("C4", "2"); // (Iso)Leucine
+    //    sidechainStoichiometry.put("O2N5C7", "3"); // DNA Gaunine / RNA Adenine
+
+    logger.warning("UNMATCHED AMINO ACID: " + residue.toFormattedString(true, true))
+    return ""
+  }
+
   // Get residue name
-  private String getResidueCode(Residue residue) {
+  private String getDNAResidueCode(Residue residue) {
     List<Atom> atoms = residue.getAtomList(true)
     List<Integer> atomTypes = new ArrayList<>()
     for (Atom atom : atoms) {
@@ -516,8 +726,9 @@ class SaveAsPDBNew extends PotentialScript {
     }
 
     // todo - no support for a single nucleotide.. won't handle both 5'-OH and  3'-OH
+    // todo - could use stoichiometry like amino acids - not for now because it works
 
-    logger.info("UNMATCHED RESIDUE: " + residue.toFormattedString(true, true))
+    logger.warning("UNMATCHED RESIDUE: " + residue.toFormattedString(true, true))
     return ""
   }
 
