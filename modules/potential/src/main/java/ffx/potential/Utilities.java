@@ -42,19 +42,13 @@ import static ffx.potential.bonded.NamingUtils.renameAminoAcidToPDBStandard;
 import static ffx.potential.bonded.NamingUtils.renameNucleicAcidToPDBStandard;
 import static org.apache.commons.math3.util.FastMath.sqrt;
 
-import ffx.potential.bonded.AminoAcidUtils;
-import ffx.potential.bonded.Atom;
-import ffx.potential.bonded.Bond;
-import ffx.potential.bonded.Molecule;
-import ffx.potential.bonded.NucleicAcidUtils;
-import ffx.potential.bonded.Polymer;
-import ffx.potential.bonded.Residue;
+import ffx.potential.bonded.*;
+import ffx.potential.parameters.BioType;
+
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.ListIterator;
+import java.util.*;
 import java.util.logging.Logger;
 
 /**
@@ -72,6 +66,12 @@ public final class Utilities {
    * probably exist. This is currently backed by ArrayLists.
    */
   private static final List<List<Atom>> atomListPool = new ArrayList<>();
+
+  /**
+   * Atom type map that contains molecule names and all atom type integers in each molecule for each molecule defined in
+   * the force field.
+   */
+  private static Map<String, List<Integer>> moleculeAtomTypeDict = new HashMap<>();
 
   /**
    * Finds the RMS deviation between the atoms of MolecularAssembly m1 and m2 provided they have the
@@ -123,6 +123,32 @@ public final class Utilities {
     int ionNum = 0;
     int moleculeNum = 0;
     List<String> segIDs = new ArrayList<>();
+
+    // Add DNA chains to the molecular assembly
+    // create an atom type map for each molecule in the force field
+    createAtomTypeMap(molecularAssembly);
+    int fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1); // 0 = O5* ; 1 = H5T
+    List<Atom> fivePrimeHs = new ArrayList<>();
+    // get 5' hydrogen's of DNA (based on the force field's atom type)
+    for (Atom a : atoms) {
+      int at = a.getType();
+      if (at == fivePrimeHType) { // get HO5' (start of the DNA chain)
+        fivePrimeHs.add(a);
+      }
+    }
+
+    // Make all DNA chains
+    for (Atom a : fivePrimeHs) {
+      Character chain = getChainID(num);
+
+      Polymer polymer = addDNAChain(a, chain);
+      for (Atom ra : polymer.getAtomList()) {
+        atoms.remove(ra);
+      }
+      molecularAssembly.addMSNode(polymer);
+      num++;
+    }
+
     while (!atoms.isEmpty()) {
       /*
        Nitrogen is used to "seed" a backbone search because carbon can
@@ -280,6 +306,212 @@ public final class Utilities {
   private static void addAtomListToPool(List<Atom> a) {
     a.clear();
     atomListPool.add(a);
+  }
+
+  /**
+   * Build an atom type dictionary for each molecule in the force field.
+   *
+   * @param molecularAssembly molecular assembly
+   */
+  private static void createAtomTypeMap(MolecularAssembly molecularAssembly) {
+    moleculeAtomTypeDict.clear();
+    Map<String, BioType> bioTypes = molecularAssembly.getForceField().getBioTypeMap();
+    Map<String, ArrayList<BioType>> moleculeDict = new HashMap<>();
+    if (!bioTypes.isEmpty()) {
+      for (BioType bioType : bioTypes.values()) {
+        if (!moleculeDict.containsKey(bioType.moleculeName)) {
+          moleculeDict.put(bioType.moleculeName, new ArrayList<>());
+          moleculeAtomTypeDict.put(bioType.moleculeName, new ArrayList<>());
+        }
+        ArrayList<BioType> moleculeBioTypes = moleculeDict.get(bioType.moleculeName);
+        moleculeBioTypes.add(bioType);
+        ArrayList<Integer> moleculeAtomTypes = (ArrayList<Integer>) moleculeAtomTypeDict.get(bioType.moleculeName);
+        moleculeAtomTypes.add(bioType.atomType);
+      }
+    }
+  }
+
+  /**
+   * Creates a Polymer object for a DNA chain given an H5' to grow from
+   *
+   * @param startAtom H5' atom
+   * @param chain Chain character to distinguish polymer
+   * @return Polymer object of the full DNA chain
+   */
+  private static Polymer addDNAChain(Atom startAtom, Character chain) {
+    // Set up new Polymer (chain) for a DNA strand
+    Polymer polymer = new Polymer(chain, chain.toString(), true);
+
+    // atom to start building residue from
+    Atom atom = startAtom;
+
+    int resNum = 1;
+    while (atom != null) {
+      // atom list for current residue
+      List<Atom> currResidue = new ArrayList<>();
+      // add starting atom current residue atom list
+      currResidue.add(atom);
+      // atom list for next residue - will contain the next residue's starting atom (phosphorus)
+      List<Atom> nextResidue = new ArrayList<>();
+      // recursively find all atoms in the residue
+      findDNAResidueAtoms(atom.getIndex(), atom, currResidue, nextResidue);
+      // create a new residue
+      Residue residue = new Residue(resNum, Residue.ResidueType.NA);
+      residue.setChainID(chain);
+
+      // add copied atoms to residue
+      for (Atom a : currResidue) {
+        a.setResidueNumber(resNum);
+        a.setChainID(chain);
+        a.setSegID(String.valueOf(chain));
+        residue.addMSNode(a);
+      }
+
+      String resname = getDNAResidueCode(residue);
+      residue.setName(resname);
+
+      renameNucleicAcidToPDBStandard(residue);
+
+      // add residue to polymer
+      polymer.addMSNode(residue);
+
+      resNum++;
+
+      if (nextResidue.size() == 1) {
+        atom = nextResidue.getFirst(); // start next residue at phosphorus
+      } else {
+        atom = null; // end loop
+      }
+    }
+
+    return polymer;
+  }
+
+  /**
+   * Recursive atom finding atoms for a DNA residue. It ends on a phosphorus atom but includes all other bonded atoms
+   * until then without going back up to the previous DNA residue.
+   *
+   * @param startingIndex index of atom that starts the recursion
+   * @param atom atom that is next in the recursion
+   * @param currResidue atom list containing atoms that will be added to the
+   * @param nextResidue atom list that will contain the phosphorus for the next DNA residue
+   */
+  private static void findDNAResidueAtoms(int startingIndex, Atom atom, List<Atom> currResidue, List<Atom> nextResidue) {
+    List<Atom> bondedAtoms = new ArrayList<>(atom.get12List());
+    if (atom.getAtomicNumber() == 15) { // 15 is phosphorus
+      Atom o3 = null;
+      for (Atom a : bondedAtoms) {
+        if (a.getType() == 338) { // 338 is Deoxyribose O3 - was part of previous residue // todo - can i use atomTypeMap... or biochem like i did with amino acids?
+          o3 = a;
+        }
+      }
+      if (o3 != null) {
+        bondedAtoms.remove(o3);
+      } else {
+        logger.severe("Missing O3 from Phosphorus bond list.");
+      }
+    }
+    for (Atom ba : bondedAtoms) {
+      if (!currResidue.contains(ba) && ba.getAtomicNumber() != 15) { // 15 is phosphorus
+        currResidue.add(ba);
+        findDNAResidueAtoms(startingIndex, ba, currResidue, nextResidue);
+      } else if (ba.getAtomicNumber() == 15 && !nextResidue.contains(ba) && ba.getIndex() != startingIndex) {
+        nextResidue.add(ba);
+      }
+    }
+  }
+
+  // Get residue name - todo could be replaced with/like below??
+  // or... todo if I remove this call will "renameNucleicAcidToPDBStandard" do this for me?ff
+
+  /**
+   * Get a DNA residue 3-letter code based on the atoms in it.
+   *
+   * @param residue DNA residue to be named
+   * @return string of the DNA residue 3-letter code
+   */
+  private static String getDNAResidueCode(Residue residue) {
+    List<Atom> atoms = residue.getAtomList(true);
+    List<Integer> atomTypes = new ArrayList<>();
+    for (Atom atom : atoms) {
+      atomTypes.add(atom.getType());
+    }
+    atomTypes.sort(null);
+
+    String[] dnaNames = {"Deoxythymidine", "Deoxyadenosine", "Deoxyguanosine", "Deoxycytidine"};
+    for (String name : dnaNames) {
+      // Work on a copy so the original dictionary entry is not mutated,
+      // and remove by value (not index) explicitly.
+      List<Integer> bioTypes = new ArrayList<>(moleculeAtomTypeDict.get(name));
+      bioTypes.sort(null);
+
+      // check if atom types match biotypes off the bat
+      if (atomTypes.equals(bioTypes)) {
+        return nameToCode(name);
+      } else if (atomTypes.contains(342)) {
+        // if residue is a 5' end.. remove regular O5' and need to add H5T and O5' (terminal)
+        bioTypes.remove((Object) 341); // remove regular O5'
+        bioTypes.add(342); // H5T - 5-Hydroxyl DNA
+        bioTypes.add(348); // O5' - 5-Hydroxyl DNA
+        if (atomTypes.equals(bioTypes)) {
+          return nameToCode(name);
+        }
+      } else if (atomTypes.contains(339)) {
+        // if residue is a 3' end.. remove regular O3' and need to add H3T and O3' (terminal) along with phosphate
+        bioTypes.remove((Object) 338); // remove regular O3'
+        bioTypes.add(343); // P - Phosphodiester DNA
+        bioTypes.add(344); // OP - Phosphodiester DNA
+        bioTypes.add(344); // OP - Phosphodiester DNA
+        bioTypes.add(339); // H3T - 3-Hydroxyl DNA
+        bioTypes.add(347); // O3' - 3-Hydroxyl DNA
+        bioTypes.sort(null);
+        if (atomTypes.equals(bioTypes)) {
+          return nameToCode(name);
+        }
+      } else {
+        // not 5' or 3' terminal residue, so just add phosphate group
+        bioTypes.add(343); // P - Phosphodiester DNA
+        bioTypes.add(344); // OP - Phosphodiester DNA
+        bioTypes.add(344); // OP - Phosphodiester DNA
+        if (atomTypes.equals(bioTypes)) {
+          return nameToCode(name);
+        }
+      }
+
+      // final check - need to add the other 2 H7s if the residue is deoxythymidine (bioTypes contains 1 H7, need 3)
+      if (name.equals("Deoxythymidine") && atomTypes.contains(295)) {
+        bioTypes.add(295); // H7 - Deoxythymidine
+        bioTypes.add(295); // H7 - Deoxythymidine
+        bioTypes.sort(null);
+        if (atomTypes.equals(bioTypes)) {
+          return nameToCode(name);
+        }
+      }
+    }
+
+    // todo - no support for a single nucleotide.. won't handle both 5'-OH and  3'-OH
+    // todo - could use stoichiometry like amino acids - not for now because it works
+
+    logger.warning("UNMATCHED RESIDUE: " + residue.toFormattedString(true, true));
+    return "";
+  }
+
+  /**
+   * Convert a DNA name to the 3-letter code.
+   *
+   * @param name string of the DNA residue name
+   * @return string of the 3-letter code
+   */
+  private static String nameToCode(String name) {
+    String code;
+    switch (name) {
+      case "Deoxythymidine" -> code = "DTY";
+      case "Deoxyadenosine" -> code = "DAD";
+      case "Deoxyguanosine"-> code = "DGU";
+      case "Deoxycytidine" -> code = "DCY";
+      default -> code = "Unknown";
+    }
+    return code;
   }
 
   /**
