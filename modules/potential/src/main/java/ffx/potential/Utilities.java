@@ -127,7 +127,10 @@ public final class Utilities {
     // Add DNA chains to the molecular assembly
     // create an atom type map for each molecule in the force field
     createAtomTypeMap(molecularAssembly);
-    int fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1); // 0 = O5* ; 1 = H5T
+    int fivePrimeHType = 0;
+    if (moleculeAtomTypeDict.get("5-Hydroxyl DNA") != null) {
+      fivePrimeHType = moleculeAtomTypeDict.get("5-Hydroxyl DNA").get(1); // 0 = O5* ; 1 = H5T
+    }
     List<Atom> fivePrimeHs = new ArrayList<>();
     // get 5' hydrogen's of DNA (based on the force field's atom type)
     for (Atom a : atoms) {
@@ -173,15 +176,20 @@ public final class Utilities {
             atoms.remove(0);
             molecularAssembly.addMSNode(ion);
             continue;
-          } else if (atom.getAtomicNumber() == 8 && isWaterOxygen(atom)) {
+          } else if (isWaterOxygen(atom) || isWaterHydrogen(atom)) {
             // Water
             waterNum++;
             Molecule water = new Molecule("Water-" + waterNum);
-            water.addMSNode(atom);
-            atoms.remove(0);
-            List<Bond> bonds = atom.getBonds();
+            Atom oxygen = atom;
+            if (atom.getAtomicNumber() == 1) {
+              oxygen = atom.getBonds().getFirst().get1_2(atom);
+            }
+
+            water.addMSNode(oxygen);
+            atoms.remove(oxygen);
+            List<Bond> bonds = oxygen.getBonds();
             for (Bond b : bonds) {
-              Atom hydrogen = b.get1_2(atom);
+              Atom hydrogen = b.get1_2(oxygen);
               water.addMSNode(hydrogen);
               atoms.remove(hydrogen);
             }
@@ -422,7 +430,7 @@ public final class Utilities {
   }
 
   // Get residue name - todo could be replaced with/like below??
-  // or... todo if I remove this call will "renameNucleicAcidToPDBStandard" do this for me?ff
+  // or... todo if I remove this call will "renameNucleicAcidToPDBStandard" do this for me?
 
   /**
    * Get a DNA residue 3-letter code based on the atoms in it.
@@ -1355,6 +1363,25 @@ public final class Utilities {
       }
     }
     return true;
+  }
+
+  /**
+   * Returns true if Atom a is water hydrogen.
+   *
+   * @param a Atom
+   * @return boolean
+   */
+  static boolean isWaterHydrogen(Atom a) {
+    if (a.getAtomicNumber() != 1 || a.getBonds().size() != 1) {
+      return false;
+    }
+    for (Bond b : a.getBonds()) {
+      Atom o = b.get1_2(a);
+      if (isWaterOxygen(o)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
