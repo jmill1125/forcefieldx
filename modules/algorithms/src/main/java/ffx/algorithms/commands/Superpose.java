@@ -42,6 +42,7 @@ import ffx.numerics.Potential;
 import ffx.potential.MolecularAssembly;
 import ffx.potential.bonded.AminoAcidUtils.AminoAcid3;
 import ffx.potential.bonded.Atom;
+import ffx.potential.bonded.NucleicAcidUtils;
 import ffx.potential.bonded.Residue;
 import ffx.potential.cli.AtomSelectionOptions;
 import ffx.potential.parsers.SystemFilter;
@@ -52,9 +53,7 @@ import picocli.CommandLine.Mixin;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 /**
  * The Superpose script superposes molecules in an arc/multiple model pdb file (all versus all or one versus all) or in two pdb/xyz files.
@@ -229,6 +228,9 @@ public class Superpose extends AlgorithmsCommand {
       }
     }
 
+    String[] naNames = {"P", "O5'", "C5'", "C4'", "C3'", "O3'"};
+    Set<String> naBackboneNames = Set.of(naNames);
+
     // Loop over atoms and apply remaining selection flags.
     Atom[] atoms = activeAssembly.getAtomArray();
     List<Integer> selectedList = new ArrayList<>();
@@ -253,9 +255,21 @@ public class Superpose extends AlgorithmsCommand {
             atom.setActive(false);
           }
         } else if (backboneSelection == 1) {
-          // BACKBONE (not supported for NA)
-          if (!(atom.getName().equals("CA") || atom.getName().equals("N") || atom.getName().equals("C"))) {
-            atom.setActive(false);
+          // todo - could have option to specifically look at just protein or just dna
+          String resName = atom.getResidueName();
+          boolean isNA3 = Arrays.stream(NucleicAcidUtils.NucleicAcid3.values()).anyMatch(na3 -> na3.name().equals(resName));
+          boolean isNA  = Arrays.stream(NucleicAcidUtils.NA.values()).anyMatch(na -> na.name().equals(resName));
+
+          if (isNA || isNA3) {
+            // BACKBONE (for NA)
+            if (!naBackboneNames.contains(atom.getName())) {
+              atom.setActive(false);
+            }
+          } else {
+            // BACKBONE (not supported for NA)
+            if (!(atom.getName().equals("CA") || atom.getName().equals("N") || atom.getName().equals("C"))) {
+              atom.setActive(false);
+            }
           }
         }
       }
