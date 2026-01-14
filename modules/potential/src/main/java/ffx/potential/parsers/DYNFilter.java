@@ -177,6 +177,7 @@ public class DYNFilter {
     } catch (Exception e) {
       String message = "Exception reading dynamic restart file: " + dynFile;
       logger.log(Level.WARNING, message, e);
+      return false;
     }
     return true;
   }

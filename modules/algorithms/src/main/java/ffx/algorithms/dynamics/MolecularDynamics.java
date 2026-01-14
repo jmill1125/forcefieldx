@@ -71,8 +71,12 @@ import ffx.potential.parsers.XPHFilter;
 import ffx.potential.parsers.XYZFilter;
 import ffx.utilities.TinkerUtils;
 import org.apache.commons.configuration2.CompositeConfiguration;
+import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -246,6 +250,10 @@ public class MolecularDynamics implements Runnable, Terminatable {
    * Dynamics restart file.
    */
   File restartFile = null;
+  /**
+   * Dynamics restart file backup.
+   */
+  File restartBackup = null;
   /**
    * Flag to indicate loading of restart file.
    */
@@ -878,6 +886,7 @@ public class MolecularDynamics implements Runnable, Terminatable {
 
     this.restartFile = (dyn == null) ? fallbackDynFile : dyn;
     loadRestart = restartFile.exists() && !initialized;
+    this.restartBackup = new File(FilenameUtils.removeExtension(this.restartFile.getAbsolutePath()) + "_backup.dyn");
 
     if (dynFilter == null) {
       dynFilter = new DYNFilter(molecularAssembly[0].getName());
@@ -1139,6 +1148,19 @@ public class MolecularDynamics implements Runnable, Terminatable {
     double[] v = state.v();
     double[] a = state.a();
     double[] aPrevious = state.aPrevious();
+
+    // Move previous restart file to a backup
+    try {
+      if (restartFile.exists()) {
+        Files.move(restartFile.toPath(), restartFile.toPath().resolveSibling(restartBackup.getName()),
+                StandardCopyOption.REPLACE_EXISTING);
+      }
+    } catch (IOException e) {
+      String message = " Could not replace backup dyn with current dyn - dynamics terminated.";
+      logger.log(Level.WARNING, message);
+      throw new RuntimeException(e);
+    }
+
     if (dynFilter.writeDYN(restartFile, molecularAssembly[0].getCrystal(), x, v, a, aPrevious)) {
       logger.log(basicLogging, format(" Wrote dynamics restart to:  %s.", dynName));
     } else {
@@ -1235,10 +1257,29 @@ public class MolecularDynamics implements Runnable, Terminatable {
         double[] a = state.a();
         double[] aPrevious = state.aPrevious();
         if (!dynFilter.readDYN(restartFile, crystal, x, v, a, aPrevious)) {
-          String message = " Could not load the restart file - dynamics terminated.";
+          String message = " Could not load the restart file - trying backup.";
           logger.log(Level.WARNING, message);
-          done = true;
-          throw new IllegalStateException(message);
+          if (!dynFilter.readDYN(restartBackup, crystal, x, v, a, aPrevious)) {
+            message = " Could not load the restart file - dynamics terminated.";
+            logger.log(Level.WARNING, message);
+            done = true;
+            throw new IllegalStateException(message);
+          } else {
+            // Overwrite the original dyn file with the backup so it will correctly re-save the backup in the first write restart
+            try {
+              Files.move(restartBackup.toPath(), restartBackup.toPath().resolveSibling(restartFile.getName()),
+                      StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+              message = " Could not replace original dyn with backup - dynamics terminated.";
+              logger.log(Level.WARNING, message);
+              throw new RuntimeException(e);
+            }
+            molecularAssembly[0].setCrystal(crystal);
+            potential.setCoordinates(x);
+            potential.setVelocity(v);
+            potential.setAcceleration(a);
+            potential.setPreviousAcceleration(aPrevious);
+          }
         } else {
           molecularAssembly[0].setCrystal(crystal);
           potential.setCoordinates(x);
