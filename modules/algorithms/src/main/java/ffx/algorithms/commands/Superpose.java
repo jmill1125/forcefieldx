@@ -78,6 +78,13 @@ public class Superpose extends AlgorithmsCommand {
   private int backboneSelection;
 
   /**
+   * --dna Only consider DNA atoms.
+   */
+  @Option(names = {"--dna"}, paramLabel = "false", defaultValue = "false",
+          description = "Only consider DNA atoms. Note only implemented when specifying --bb 1.")
+  private boolean dna;
+
+  /**
    * --ih or --includeHydrogen Include hydrogen atoms.
    */
   @Option(names = {"--ih", "--includeHydrogen"}, paramLabel = "false", defaultValue = "false",
@@ -255,7 +262,6 @@ public class Superpose extends AlgorithmsCommand {
             atom.setActive(false);
           }
         } else if (backboneSelection == 1) {
-          // todo - could have option to specifically look at just protein or just dna
           String resName = atom.getResidueName();
           boolean isNA3 = Arrays.stream(NucleicAcidUtils.NucleicAcid3.values()).anyMatch(na3 -> na3.name().equals(resName));
           boolean isNA  = Arrays.stream(NucleicAcidUtils.NA.values()).anyMatch(na -> na.name().equals(resName));
@@ -265,8 +271,10 @@ public class Superpose extends AlgorithmsCommand {
             if (!naBackboneNames.contains(atom.getName())) {
               atom.setActive(false);
             }
+          } else if (dna) {
+            atom.setActive(false);
           } else {
-            // BACKBONE (not supported for NA)
+            // BACKBONE (for AA)
             if (!(atom.getName().equals("CA") || atom.getName().equals("N") || atom.getName().equals("C"))) {
               atom.setActive(false);
             }
