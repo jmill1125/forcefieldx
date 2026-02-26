@@ -69,6 +69,7 @@ import static ffx.potential.parameters.MultipoleType.t100;
 import static ffx.potential.parameters.MultipoleType.t101;
 import static ffx.potential.parameters.MultipoleType.t110;
 import static ffx.potential.parameters.MultipoleType.t200;
+import static org.apache.commons.math3.util.FastMath.pow;
 import static org.apache.commons.math3.util.FastMath.max;
 
 /**
@@ -418,10 +419,10 @@ public class InitializationRegion extends ParallelRegion {
            * polarizability by the appropriate lambda value.
            */
           if (alchemicalParameters.mode == SCALE && atom.applyLambda()) {
-            chargeScale *= alchemicalParameters.permLambda;
-            dipoleScale *= alchemicalParameters.permLambda;
-            quadrupoleScale *= alchemicalParameters.permLambda;
-            polarizabilityScale *= alchemicalParameters.polLambda;
+            chargeScale *= pow(alchemicalParameters.permLambda, alchemicalParameters.permLambdaExponent);
+            dipoleScale *= pow(alchemicalParameters.permLambda, alchemicalParameters.permLambdaExponent);
+            quadrupoleScale *= pow(alchemicalParameters.permLambda, alchemicalParameters.permLambdaExponent);
+            polarizabilityScale *= pow(alchemicalParameters.permLambda, alchemicalParameters.polLambdaExponent);
           }
 
           // Collect the MultipoleType for Atom i.
