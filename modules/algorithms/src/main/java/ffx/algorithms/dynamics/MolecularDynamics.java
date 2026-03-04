@@ -1565,7 +1565,7 @@ public class MolecularDynamics implements Runnable, Terminatable {
                 // The non-equilibrium work is the difference in energy.
                 double dW = newEnergy - currentEnergy;
                 nonEquilibriumDynamics.addWork(dW);
-                logger.info(format(" Non-equilibrium L=%5.3f Work=%12.6f", newLambda, nonEquilibriumDynamics.getWork()));
+                logger.info(format(" Non-equilibrium L=%5.4f Work=%12.6f", newLambda, nonEquilibriumDynamics.getWork()));
 
                 // Reset the Respa State.
                 if (integrator instanceof Respa) {
