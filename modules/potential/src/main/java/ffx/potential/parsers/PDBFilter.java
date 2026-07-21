@@ -2136,8 +2136,11 @@ public final class PDBFilter extends SystemFilter {
                         logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
                       }
                     } else {
-                      // treating pur-pyr or pyr-pur N9/N1 & C2/C4 as alchemical
-                      if (residue.getBackboneAtoms().contains(atom)) {
+                      if (residue.getResidueType() == Residue.ResidueType.AA && !residue.getBackboneAtoms().contains(atom)) {
+                        // if amino acid - print side chain atoms
+                        logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
+                      } else if (residue.getResidueType() == Residue.ResidueType.NA && residue.getBackboneAtoms().contains(atom)) {
+                        // if nucleic acid - treating pur-pyr or pyr-pur N9/N1 & C2/C4 as alchemical
                         logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
                       }
                     }
