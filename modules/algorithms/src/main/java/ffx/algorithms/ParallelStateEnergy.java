@@ -408,6 +408,11 @@ public class ParallelStateEnergy {
     logger.info(sb.toString());
 
     int nSnapshots = openers[0].countNumModels();
+    for (int j = 1; j < numTopologies; j++) {
+      if (openers[j].countNumModels() != nSnapshots) {
+        logger.severe(" Dual-Topology archive files do not have the same number of snapshots!");
+      }
+    }
     double[] x = new double[potential.getNumberOfVariables()];
     double[] vol = new double[nSnapshots];
     int nLambdas = lambdaValues.length;
