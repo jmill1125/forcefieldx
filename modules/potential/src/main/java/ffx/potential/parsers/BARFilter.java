@@ -152,7 +152,7 @@ public class BARFilter {
       while ((data = br.readLine()) != null) {
         String[] tokens = data.trim().split(" +");
         int numTokens = tokens.length;
-        if (data.contains(".xyz") || data.contains(".pdb") || numTokens < 3) {
+        if (data.contains(".xyz") || data.contains(".pdb") || data.contains(".arc") || numTokens < 3) {
           xyzCount++;
           if (xyzCount == 1) {
             snaps1 = parseInt(tokens[0]);
