@@ -61,6 +61,7 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 import static java.lang.String.format;
 
@@ -96,6 +97,13 @@ public class MBAR extends AlgorithmsCommand {
   @Option(names = {"--numLambda", "--nL", "--nw"}, paramLabel = "-1",
       description = "Required for lambda energy evaluations. Ensure numLambda is consistent with the trajectory lambdas, i.e. gaps between traj can be filled easily. nL >> nTraj is recommended.")
   private int numLambda = -1;
+
+  @Option(
+          names = {"--lambdaArr", "--lA"},
+          paramLabel = "<selection>",
+          defaultValue = "",
+          description = "Will overwrite numLambda. Specify lambda values used as a comma-separated list of doubles. [0,0.1,0.2,...,1.0]")
+  private String lambdaArr = "";
 
   @Option(names = {"--lambdaDerivative", "--lD"}, paramLabel = "false",
       description = "Calculate lambda derivatives for each snapshot.")
@@ -193,10 +201,29 @@ public class MBAR extends AlgorithmsCommand {
 
     // Write MBAR file if option is set
     if (isArc) {
-      if (numLambda == -1) {
-        logger.severe("numLambda must be specified for lambda energy evaluations.");
+      double[] lambdaValues;
+      if (!lambdaArr.isBlank()) {
+        String[] parts = lambdaArr.split(",");
+        numLambda = parts.length;
+        lambdaValues = new double[numLambda];
+        for (int i = 0; i < numLambda; i++) {
+          try {
+            lambdaValues[i] = Double.parseDouble(parts[i].trim());
+          } catch (NumberFormatException e) {
+            logger.severe("lambdaArr must be a comma-separated list of doubles; could not parse \"" + parts[i] + "\".");
+            return this;
+          }
+        }
+      } else if (numLambda >= 2) {
+        lambdaValues = new double[numLambda];
+        for (int k = 0; k < numLambda; k++) {
+          lambdaValues[k] = (double) k / (numLambda - 1);
+        }
+      } else {
+        logger.severe("lambdaArr or numLambda (>= 2) must be specified for lambda energy evaluations.");
         return this;
       }
+
       // Get list of fileNames & check validity
       File parent = files[0].getParentFile(); // Run directory
       int window;
@@ -218,7 +245,7 @@ public class MBAR extends AlgorithmsCommand {
       // placement relative to other fileNames with energy values.
       File outputFile = new File(outputDir, "energy_" + window + ".mbar");
       //TODO: Fix atrocious setting of temperatures
-      double[][][] energiesAndDerivatives = getEnergyForLambdas(files, numLambda);
+      double[][][] energiesAndDerivatives = getEnergyForLambdas(files, lambdaValues);
       double[][] energies = energiesAndDerivatives[0]; // Long step!
       MultistateBennettAcceptanceRatio.writeFile(energies, outputFile, 298); // Assume 298 K
       if (lambdaDerivative) {
@@ -407,7 +434,7 @@ public class MBAR extends AlgorithmsCommand {
     return sum;
   }
 
-  private double[][][] getEnergyForLambdas(File[] files, int nLambda) {
+  private double[][][] getEnergyForLambdas(File[] files, double[] lambdaValues) {
 
     // Determine the number of topologies to be read and allocate the array.
     numTopologies = files.length;
@@ -428,7 +455,7 @@ public class MBAR extends AlgorithmsCommand {
     // Read in files and meta-details
     for (int i = 0; i < numTopologies; i++) {
       molecularAssemblies[i] = alchemicalOptions.openFile(algorithmFunctions, topologyOptions,
-          threadsPerTopology, files[i].getName(), i);
+          threadsPerTopology, files[i].getAbsolutePath(), i);
       openers[i] = algorithmFunctions.getFilter();
     }
 
@@ -445,13 +472,12 @@ public class MBAR extends AlgorithmsCommand {
     }
 
     // Slightly modified from BAR.groovy
+    int nLambda = lambdaValues.length;
     int nSnapshots = openers[0].countNumModels();
     double[] x = new double[potential.getNumberOfVariables()];
-    double[] lambdaValues = new double[nLambda];
     double[][] energy = new double[nLambda][nSnapshots];
     double[][] lambdaDerivatives = new double[nLambda][nSnapshots];
     for (int k = 0; k < lambdaValues.length; k++) {
-      lambdaValues[k] = (double) k / (nLambda - 1);
       energy[k] = new double[nSnapshots];
       lambdaDerivatives[k] = new double[nSnapshots];
     }
@@ -474,17 +500,20 @@ public class MBAR extends AlgorithmsCommand {
       StringBuilder sb3 = new StringBuilder().append("Snapshot ").append(i).append(" Lambda Derivatives: ");
       for (int k = 0; k < lambdaValues.length; k++) {
         double lambda = lambdaValues[k];
-        if (lambda <= 1E-6) {
-          lambda += .00275;
-        }
-        if (lambda - 1.0 < 1E-6) {
-          lambda -= .00275;
-        }
+//        if (lambda <= 1E-6) {
+//          lambda += .00275;
+//        }
+//        if (lambda - 1.0 < 1E-6) {
+//          lambda -= .00275;
+//        }
         linter1.setLambda(lambda);
-        energy[k][i] = potential.energyAndGradient(x, new double[x.length * 3]);
+//        energy[k][i] = potential.energyAndGradient(x, new double[x.length * 3]);
         if (lambdaDerivative) {
+          energy[k][i] = potential.energyAndGradient(x, new double[x.length * 3]);
           lambdaDerivatives[k][i] = linter1.getdEdL();
           sb3.append(" ").append(lambdaDerivatives[k][i]);
+        } else {
+          energy[k][i] = potential.energy(x, false);
         }
         sb2.append(" ").append(energy[k][i]);
       }
