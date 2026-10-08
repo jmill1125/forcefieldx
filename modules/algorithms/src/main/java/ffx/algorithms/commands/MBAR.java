@@ -226,10 +226,10 @@ public class MBAR extends AlgorithmsCommand {
 
       // Get list of fileNames & check validity
       File parent = files[0].getParentFile(); // Run directory
-      int window;
+      String window;
       File outputDir;
       if (outputDirectory.isEmpty()) {
-        window = Integer.parseInt(parent.getName()); // Run name should be int
+        window = parent.getName(); // Run name should be int
         outputDir = new File(parent.getParentFile(), "mbarFiles"); // Make mbarFiles
         if (!outputDir.exists()) {
           outputDir.mkdir();
@@ -239,7 +239,7 @@ public class MBAR extends AlgorithmsCommand {
         if (!outputDir.exists()) {
           outputDir.mkdir();
         }
-        window = 0;
+        window = "0";
       }
       // Write MBAR file with window number, although this will be reassigned by the file filter based on
       // placement relative to other fileNames with energy values.
