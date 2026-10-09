@@ -113,7 +113,7 @@ public final class PDBFilter extends SystemFilter {
   private static final Set<String> naBackboneNames;
 
   static {
-    String[] names = {"C", "CA", "N", "O", "OXT", "OT2"};
+    String[] names = {"C", "CA", "N", "O", "OXT", "OT2", "H", "HA"};
     backboneNames = Set.of(names);
 
     String[] constantPhNames = {"C", "CA", "N", "O", "OXT", "OT2", "H", "HA", "H1", "H2", "H3"};
@@ -894,14 +894,14 @@ public final class PDBFilter extends SystemFilter {
                             if (newName.startsWith("~")) { // switch from purine to pyrmidine or v.v.
                               // switch name and include it as an alchemical atom
                               name = newName.substring(1);
-                              logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, resName, resSeq, chainID));
+                              logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, mtn.origResName, resSeq, chainID));
                             } else {
                               // replace name but do not include as an alchemical atom
                               name = newName;
                             }
                             doBreak = false;
                           } else if (!atomName.contains("'")) {
-                            logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, resName, resSeq, chainID));
+                            logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, mtn.origResName, resSeq, chainID));
                             doBreak = true;
                           } else {
                             printAtom = true;
@@ -909,7 +909,7 @@ public final class PDBFilter extends SystemFilter {
                           }
                         } else {
                           if (alchAtoms.contains(atomName) && !atomName.contains("'")) {
-                            logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, resName, resSeq, chainID));
+                            logger.info(format(" DELETING atom %d %s of %s %d in chain %s", serial, atomName, mtn.origResName, resSeq, chainID));
                             doBreak = true;
                           } else {
                             printAtom = true;
@@ -2133,15 +2133,15 @@ public final class PDBFilter extends SystemFilter {
                     ArrayList<String> alchAtoms = mtn.getAlchemicalAtoms(true);
                     if (alchAtoms != null) {
                       if (residue.getBackboneAtoms().contains(atom) && alchAtoms.contains(atom.getName())) {
-                        logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
+                        logger.info(format(" MUTATION atom is %d %s of %s %d in chain %s", serial, atom.getName(), mtn.resName, mtn.resID, currentChainID));
                       }
                     } else {
                       if (residue.getResidueType() == Residue.ResidueType.AA && !residue.getBackboneAtoms().contains(atom)) {
                         // if amino acid - print side chain atoms
-                        logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
+                        logger.info(format(" MUTATION atom is %d %s of %s %d in chain %s", serial, atom.getName(), mtn.resName, mtn.resID, currentChainID));
                       } else if (residue.getResidueType() == Residue.ResidueType.NA && residue.getBackboneAtoms().contains(atom)) {
                         // if nucleic acid - treating pur-pyr or pyr-pur N9/N1 & C2/C4 as alchemical
-                        logger.info(format(" MUTATION atom is %d chain %s", serial, currentChainID));
+                        logger.info(format(" MUTATION atom is %d %s of %s %d in chain %s", serial, atom.getName(), mtn.resName, mtn.resID, currentChainID));
                       }
                     }
                   }
@@ -2880,6 +2880,9 @@ public final class PDBFilter extends SystemFilter {
     }
 
     public void calculateTorsion() {
+      if (AminoAcidUtils.getAminoAcidNumber(resName) != -1) {
+        return;
+      }
       double tors = toDegrees(DoubleMath.dihedralAngle(glyco[0], glyco[1], glyco[2], glyco[3]));
       double delta;
       if (tors > 0) {
