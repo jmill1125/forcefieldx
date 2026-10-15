@@ -38,6 +38,7 @@
 package ffx.algorithms.commands;
 
 import ffx.algorithms.cli.AlgorithmsCommand;
+import ffx.crystal.Crystal;
 import ffx.numerics.Potential;
 import ffx.potential.ForceFieldEnergy;
 import ffx.potential.MolecularAssembly;
@@ -162,6 +163,12 @@ public class MutatePDB extends AlgorithmsCommand {
       return this;
     }
 
+    Crystal crystal = falseAssembly.getCrystal();
+    String cryst1 = "";
+    if (crystal != null && !crystal.aperiodic()){
+      cryst1 = crystal.toCRYST1();
+    }
+
     List<Integer> resIDint = parseAtomRanges("residueID", resIDs, falseAssembly.getAtomList().size());
 
     String[] resNameArr = Arrays.stream(resNameString.split("\\.|,|;")).map(String::trim).toArray(String[]::new);
@@ -255,7 +262,12 @@ public class MutatePDB extends AlgorithmsCommand {
         }
       }
     }
-    pdbFilter.writeFile(structureFile, false);
+
+    if(crystal != null){
+      pdbFilter.writeFileWithHeader(structureFile,cryst1.strip(),false, true);
+    } else {
+      pdbFilter.writeFile(structureFile, false);
+    }
 
     for (PDBFilter.Mutation mut : mutations) {
       mut.calculateTorsion();

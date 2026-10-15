@@ -2365,9 +2365,10 @@ public final class PDBFilter extends SystemFilter {
    * @param saveFile a {@link java.io.File} object.
    * @param header   a {@link java.lang.String} object.
    * @param append   a boolean.
+   * @param versioning a boolean.
    * @return a boolean.
    */
-  public boolean writeFileWithHeader(File saveFile, String header, boolean append) {
+  public boolean writeFileWithHeader(File saveFile, String header, boolean append, boolean versioning) {
     // Set standardize atom names to false in the presence of deuterium
     if (standardizeAtomNames) {
       List<Atom> deuteriumAtoms = new ArrayList<>();
@@ -2391,8 +2392,15 @@ public final class PDBFilter extends SystemFilter {
     }
     activeMolecularAssembly.setFile(saveFile);
     activeMolecularAssembly.setName(saveFile.getName());
+    File newFile = saveFile;
+    if (!append){
+      if (versioning) {
+        newFile = version(saveFile);
+      }
+    }
 
-    try (FileWriter fw = new FileWriter(saveFile, append); BufferedWriter bw = new BufferedWriter(
+
+    try (FileWriter fw = new FileWriter(newFile, append); BufferedWriter bw = new BufferedWriter(
         fw)) {
       bw.write(header);
       bw.newLine();
@@ -2401,13 +2409,25 @@ public final class PDBFilter extends SystemFilter {
       logger.log(Level.WARNING, message, e);
       return false;
     }
-    if (writeFile(saveFile, true)) {
-      logger.log(Level.INFO, " Wrote PDB to file {0}", saveFile.getPath());
+    if (writeFile(newFile, true)) {
+      logger.log(Level.INFO, " Wrote PDB to file {0}", newFile.getPath());
       return true;
     } else {
-      logger.log(Level.INFO, " Error writing to file {0}", saveFile.getPath());
+      logger.log(Level.INFO, " Error writing to file {0}", newFile.getPath());
       return false;
     }
+  }
+
+  /**
+   * writeFileWithHeader.
+   *
+   * @param saveFile a {@link java.io.File} object.
+   * @param header   a {@link java.lang.String} object.
+   * @param append   a boolean.
+   * @return a boolean.
+   */
+  public boolean writeFileWithHeader(File saveFile, String header, boolean append) {
+    return writeFileWithHeader(saveFile, header, append,false);
   }
 
   /**
@@ -2418,7 +2438,7 @@ public final class PDBFilter extends SystemFilter {
    * @return a boolean.
    */
   public boolean writeFileWithHeader(File saveFile, String header) {
-    return writeFileWithHeader(saveFile, header, true);
+    return writeFileWithHeader(saveFile, header, true, false);
   }
 
   /**
@@ -2429,7 +2449,7 @@ public final class PDBFilter extends SystemFilter {
    * @return a boolean.
    */
   public boolean writeFileWithHeader(File saveFile, StringBuilder header) {
-    return writeFileWithHeader(saveFile, header.toString());
+    return writeFileWithHeader(saveFile, header.toString(), true, false);
   }
 
   /**
